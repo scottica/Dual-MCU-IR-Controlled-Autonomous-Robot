@@ -1,70 +1,42 @@
 # Dual-MCU IR-Controlled Autonomous Robot
 
-An end-to-end embedded robotics system featuring a custom remote controller and an autonomous rover. Built from the ground up using bare-metal C, the system utilizes a **PIC32** microcontroller as a smart remote and an **STM32** ARM Cortex-M0+ as the robot's brain, communicating entirely via a custom-designed 76kHz Infrared (IR) protocol.
+An embedded robotics system with a custom remote controller and an autonomous rover, written in bare-metal C. A **PIC32** microcontroller runs the remote and an **STM32** ARM Cortex-M0+ runs the robot. They communicate over a custom infrared protocol on a 38 kHz carrier. Built as a team project.
 
-The robot is capable of autonomous magnetic line-following, intelligent intersection navigation, Time-of-Flight (ToF) obstacle avoidance, two-way Bluetooth telemetry, and remote-controlled manual override using an analog joystick.
+The robot follows the magnetic field of a guide wire, executes preset turns at intersections, stops for obstacles using a time-of-flight sensor, streams telemetry over Bluetooth Low Energy, and can be driven manually with a joystick.
 
 ## 🚀 Key Features
 
-### 📡 Telemetry & PC Integration
-* **Two-Way Bluetooth Communication:** Streams real-time robot statistics (including live battery percentage and current location/progress on the path) back to the user, while allowing remote path selection.
-* **CSV Custom Routing:** Supports loading custom navigation paths dynamically from a PC via Bluetooth by parsing a `.csv` file.
-* **Custom IR Protocol:** Designed a robust 76kHz IR protocol using pulse-count modulation to encode joystick vectors and commands, decoded on the receiver via hardware timers.
+### 📡 Communication & PC Integration
+* **Custom IR Protocol:** Each packet is a flag pulse, a ~100 ms gap, and a data pulse, with values encoded in pulse length. The PIC32 generates the 38 kHz carrier by toggling the IR LED from a 76 kHz timer interrupt, and the STM32 measures pulse lengths with `TIM21` and decodes them with a lookup table. Signal timing was measured with an oscilloscope to tune pulse widths against receiver noise.
+* **BLE Telemetry & Dashboard:** An AT-09 BLE module streams coil readings, intersection count, and battery voltage to a Python dashboard (`bleak`), which can also select paths and upload custom routes from a `.csv` file.
 
 ### 🧠 Autonomous Navigation
-* **Sensor Fusion & Magnetic Tracking:** Fuses data from three differential analog magnetic coils via ADC to track lines and detect intersections. 
-* **Dynamic Intersection Routing:** A programmable state machine executes predefined, custom, or auto-reversing turn sequences at intersections.
-* **ToF Obstacle Avoidance:** Integrates a VL53L0X Time-of-Flight laser sensor via I2C to detect obstacles within 100mm, automatically pausing motor execution to prevent collisions.
+* **Magnetic Field Sensing:** Three LC tank circuits tuned to the guide wire's signal, each with an LM358 amplifier and a peak detector feeding the STM32's ADC.
+* **Line Following:** Compares the left and right coil readings and makes small corrective turns when their difference exceeds a threshold.
+* **Intersection Routing:** A spike on the center coil marks an intersection, and a state machine (turning, intersection cooldown, driving) executes the preset or custom turn sequence.
+* **Collision Stopping:** A VL53L0X time-of-flight sensor over I2C pauses the robot when an obstacle is within 100 mm. (The VL53L0X driver is adapted from an open-source library.)
 
-### 🎮 Smart Remote & UI
-* **Interactive LCD Dashboard:** The PIC32 remote features a 16x2 LCD displaying a dynamic real-time progress bar for the robot's path, battery stats, and an Options Menu to configure autonomous PWM base speeds.
-* **Proportional Manual Control:** The analog joystick calculates Euclidean vectors to provide smooth, proportional PWM speed control during manual override.
-* **Multi-Sensory Feedback:** Includes distinct LED indicators (Blue for active navigation, solid Green for idle, and flashing Green upon destination arrival) and audio feedback, with the controller speaker beeping to indicate the active path number.
+### 🎮 Remote Controller
+* **LCD Interface:** A 16x2 LCD shows the mode, a path progress bar, and an options menu for speed, path selection, reverse mode, and custom paths.
+* **Joystick Control:** Joystick readings are calibrated at startup, converted to polar form (angle and magnitude), and sent over IR for manual driving.
+* **Feedback:** Status LEDs and a speaker that beeps the selected path number.
 
-### ⚙️ Automated Mechanics
-* **Smart Claw System:** A PWM-driven servo claw that automatically detects and grips objects using a dedicated IR proximity sensor, holding them securely until automatically dropping them off at the final destination. Supports full manual override via the remote.
+### ⚙️ Mechanics
+* **Claw:** A servo-driven claw closes automatically when an IR proximity sensor detects an object during a path, with manual control from the remote.
 
 ## 🧠 System Architecture
 
-The project is split into two distinct codebases running on two different architectures:
+### Remote (PIC32MX130)
+* 40 MHz MIPS32 core; joystick, pushbuttons with software debouncing, 16x2 LCD, speaker, LEDs, and IR LED driven by `Timer2` interrupts.
 
-### 1. The Transmitter: Smart Remote (PIC32MX130)
-* **Core:** MIPS32 architecture running at 40 MHz.
-* **Inputs:** 2-Axis Analog Joystick and 4x digital push-buttons with hardware debouncing.
-* **Outputs:** 16x2 LCD, audio speaker, status LEDs, and a 76kHz IR LED driven by `Timer2` interrupts.
-* **Role:** Processes user inputs, calculates angular vectors and magnitudes, manages the UI state machine, and packages commands into discrete IR pulses.
-
-### 2. The Receiver: Autonomous Rover (STM32L051xx)
-* **Core:** ARM Cortex-M0+ running at 32 MHz.
-* **Inputs:** IR Receiver diode (parsed via `TIM21`), 3x Magnetic Coils (ADC), VL53L0X ToF Sensor (I2C), and an IR proximity sensor.
-* **Outputs:** 4x DC Motors (Tank drive configuration), 1x Servo Motor, and Bluetooth TX/RX, driven by custom software-defined PWM utilizing `TIM2` interrupts.
-* **Role:** Decodes incoming IR packets, calculates motor PWM duty cycles, executes PID-style line following, manages Bluetooth telemetry, and halts operations based on sensor interrupts.
-
-## 🛠️ Hardware Requirements
-
-**Remote Controller:**
-* Microcontroller: PIC32MX130F064B
-* 2-Axis Analog Joystick
-* 16x2 Character LCD
-* IR Transmitter LED & Status LEDs
-* Push buttons & Piezo Speaker
-
-**Robot Chassis:**
-* Microcontroller: STM32L051xx 
-* Bluetooth Module (e.g., HC-05 / AT-09)
-* 4x DC Motors & Motor Drivers (e.g., L298N)
-* 1x Micro Servo (Claw)
-* 3x Magnetic Induction Coils (Left, Right, Center/Intersection)
-* VL53L0X Time-of-Flight Sensor
-* IR Receiver Diode & Proximity Sensor
+### Robot (STM32L051)
+* 32 MHz ARM Cortex-M0+; IR receiver (`TIM21`), three inductor sensors (ADC), VL53L0X (I2C), IR proximity sensor, and AT-09 BLE module (USART2).
+* Two gear motors driven by discrete MOSFET H-bridges, isolated from the logic by an LTV-847 optocoupler, with 100 Hz software PWM from `TIM2`. A servo drives the claw at 50 Hz.
 
 ## 💻 Tech Stack
+* **Languages:** Bare-metal C, Python
+* **Protocols:** I2C, UART, BLE, custom IR
+* **Concepts:** Timer interrupts, software PWM, ADC sampling, state machines, analog signal conditioning
 
-* **Languages:** Bare-Metal C
-* **Protocols:** I2C (Sensors), Custom IR (Communication), UART (Bluetooth & Debugging)
-* **Embedded Concepts:** Hardware Timers, Interrupt Service Routines (ISRs), ADC Polling, Software PWM generation, State Machines, Sensor Fusion.
-
-## 🎮 Operating Modes
-
-1. **Autonomous Mode:** The user selects a pre-programmed path or uploads a CSV via Bluetooth. The robot follows the magnetic tape, automatically executes turns, adjusts speed based on the Options Menu, picks up payloads, and auto-reverses if commanded. 
-2. **Manual Mode:** The user swaps modes via joystick press. The PIC32 converts Cartesian coordinates into polar vectors and transmits them via IR, allowing fluid, proportional tank-style remote driving with manual claw control.
+## ⚠️ Known Limitations
+Turns are timed rather than measured, so turn accuracy varies with battery voltage and floor friction. Wheel encoders or a gyroscope would allow closed-loop turns.
